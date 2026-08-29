@@ -1,0 +1,23 @@
+otp_server.py
+  s_04153daf23a3db::t_5725f2ff5dfeb8 368-370
+  s_04153daf23a3db::t_ea64bcce63a5e3 191-214
+  s_04153daf23a3db::t_3bb1ede9c54c5b 480-488
+  s_04153daf23a3db::t_074625152c461b 312-328
+  s_04153daf23a3db::t_3fd58141ffbf7d 403-410
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "ef90b6ad2ae5f24a1b943f5a2c8e7e9856a58441",
+  "prompts": {},
+  "sessions": {
+    "s_04153daf23a3db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c07a1235-2cca-428d-af4b-f158681d9d2b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "wudazhan <wudazhan5@gmail.com>"
+    }
+  }
+}
