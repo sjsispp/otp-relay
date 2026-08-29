@@ -35,20 +35,121 @@ CONFIG_PATH = Path(__file__).with_name("config.json")  # 存 token，已 gitigno
 # 命中这些关键词之一，才当作验证码短信处理（否则忽略，不动剪贴板）
 KEYWORDS = ["验证码", "动态码", "校验码", "code", "verification", "otp", "one-time"]
 
-# 登录自启（LaunchAgent）
+IS_MAC = sys.platform == "darwin"
+IS_WIN = sys.platform.startswith("win")
+SCRIPT_PATH = Path(__file__).resolve()
+
+# 平台相关文案
+THIS_PC = "这台 Mac" if IS_MAC else ("这台 Windows 电脑" if IS_WIN else "本机")
+RESTART_CMD = "start.cmd" if IS_WIN else "./start.sh"
+PASTE_KEY = "Cmd+V" if IS_MAC else "Ctrl+V"
+
+# 登录自启标识
 LAUNCH_LABEL = "com.otp-relay.local"
 LAUNCH_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_LABEL}.plist"
-SCRIPT_PATH = Path(__file__).resolve()
-# ─────────────────────────────────────────────────────────
+# Windows 启动文件夹里放一个 .cmd
+WIN_STARTUP = (
+    Path(os.environ.get("APPDATA", Path.home()))
+    / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
+    / "otp-relay.cmd"
+)
+
+
+# ─── 平台适配层：剪贴板 / 通知 / 本机IP / 登录自启 ─────────
+def set_clipboard(code: str) -> None:
+    if IS_WIN:
+        # clip 读 stdin；用 UTF-16LE 避免中文/编码问题（验证码是数字，无所谓，但保持稳健）
+        subprocess.run("clip", input=code.encode("utf-16-le"), shell=True, check=False)
+    else:
+        subprocess.run(["pbcopy"], input=code.encode(), check=False)
+
+
+def notify(code: str) -> None:
+    msg = f"验证码 {code} 已复制，可直接粘贴"
+    if IS_MAC:
+        subprocess.run(
+            ["osascript", "-e", f'display notification "{msg}" with title "OTP"'],
+            check=False,
+        )
+    elif IS_WIN:
+        # PowerShell 气泡通知；失败也不影响剪贴板
+        ps = (
+            "[reflection.assembly]::LoadWithPartialName('System.Windows.Forms')>$null;"
+            "$n=New-Object System.Windows.Forms.NotifyIcon;"
+            "$n.Icon=[System.Drawing.SystemIcons]::Information;$n.Visible=$true;"
+            f"$n.ShowBalloonTip(4000,'OTP','{msg}',[System.Windows.Forms.ToolTipIcon]::Info);"
+            "Start-Sleep -Seconds 4;$n.Dispose()"
+        )
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps], check=False)
+    # 其它平台：静默（剪贴板已写入，仍可用）
+
+
+def local_ips() -> list[str]:
+    """所有非回环 IPv4，首选默认网卡排最前。"""
+    ips: list[str] = []
+    primary = ""
+    if IS_WIN:
+        try:
+            out = subprocess.run(
+                ["ipconfig"], capture_output=True, text=True
+            ).stdout
+            for line in out.splitlines():
+                line = line.strip()
+                if "IPv4" in line and ":" in line:
+                    ip = line.split(":")[-1].strip()
+                    if ip and not ip.startswith(("169.254.", "127.")):
+                        ips.append(ip)
+        except Exception:
+            pass
+    else:
+        try:
+            out = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
+            for line in out.splitlines():
+                line = line.strip()
+                if line.startswith("inet ") and "127.0.0.1" not in line:
+                    ip = line.split()[1]
+                    if not ip.startswith(("169.254.", "fe80")):
+                        ips.append(ip)
+        except Exception:
+            pass
+        try:
+            primary = subprocess.run(
+                ["ipconfig", "getifaddr", "en0"], capture_output=True, text=True
+            ).stdout.strip()
+        except Exception:
+            primary = ""
+    # 兜底：用 socket 探测默认出口 IP
+    if not ips:
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ips.append(s.getsockname()[0])
+            s.close()
+        except Exception:
+            pass
+    if primary and primary in ips:
+        ips.remove(primary)
+        ips.insert(0, primary)
+    return ips
 
 
 def autostart_enabled() -> bool:
-    return LAUNCH_PLIST.exists()
+    return WIN_STARTUP.exists() if IS_WIN else LAUNCH_PLIST.exists()
 
 
 def enable_autostart() -> None:
-    """写入并加载 LaunchAgent，登录时自动后台启动本服务。"""
     log = SCRIPT_PATH.with_name("otp-relay.log")
+    if IS_WIN:
+        WIN_STARTUP.parent.mkdir(parents=True, exist_ok=True)
+        # pythonw 后台无窗口运行
+        pyw = Path(sys.executable).with_name("pythonw.exe")
+        exe = pyw if pyw.exists() else Path(sys.executable)
+        WIN_STARTUP.write_text(
+            f'@echo off\r\nstart "" "{exe}" "{SCRIPT_PATH}"\r\n', encoding="utf-8"
+        )
+        return
+    # macOS LaunchAgent
     plist = f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -64,7 +165,6 @@ def enable_autostart() -> None:
 """
     LAUNCH_PLIST.parent.mkdir(parents=True, exist_ok=True)
     LAUNCH_PLIST.write_text(plist)
-    # 尽量加载（已在跑时 bootstrap 可能报"已存在"，忽略即可）
     subprocess.run(
         ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(LAUNCH_PLIST)],
         capture_output=True,
@@ -72,7 +172,9 @@ def enable_autostart() -> None:
 
 
 def disable_autostart() -> None:
-    """卸载并删除 LaunchAgent。"""
+    if IS_WIN:
+        WIN_STARTUP.unlink(missing_ok=True)
+        return
     subprocess.run(
         ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCH_LABEL}"],
         capture_output=True,
@@ -125,40 +227,6 @@ def mask(code: str) -> str:
     return code[0] + "•" * (len(code) - 2) + code[-1]
 
 
-def copy_to_clipboard(code: str) -> None:
-    subprocess.run(["pbcopy"], input=code.encode(), check=True)
-
-
-def notify(code: str) -> None:
-    script = f'display notification "验证码 {code} 已复制，可直接 Cmd+V" with title "OTP"'
-    subprocess.run(["osascript", "-e", script], check=False)
-
-
-def local_ips() -> list[str]:
-    """所有非回环 IPv4，首选 en0 排最前。"""
-    ips: list[str] = []
-    try:
-        out = subprocess.run(["ifconfig"], capture_output=True, text=True).stdout
-        for line in out.splitlines():
-            line = line.strip()
-            if line.startswith("inet ") and "127.0.0.1" not in line:
-                ip = line.split()[1]
-                if not ip.startswith(("169.254.", "fe80")):
-                    ips.append(ip)
-    except Exception:
-        pass
-    try:
-        en0 = subprocess.run(
-            ["ipconfig", "getifaddr", "en0"], capture_output=True, text=True
-        ).stdout.strip()
-        if en0 in ips:
-            ips.remove(en0)
-            ips.insert(0, en0)
-    except Exception:
-        pass
-    return ips
-
-
 def record(kind: str, detail: str) -> None:
     RECENT.appendleft((datetime.now().strftime("%H:%M:%S"), kind, detail))
 
@@ -190,7 +258,7 @@ def render_status_page(is_local: bool) -> str:
         """
     else:
         token_form = (
-            '<p class="hint">🔒 修改 token 只能在这台 Mac 上（localhost）操作。</p>'
+            f'<p class="hint">🔒 修改 token 只能在{THIS_PC}上（localhost）操作。</p>'
         )
 
     auto_on = autostart_enabled()
@@ -207,14 +275,14 @@ def render_status_page(is_local: bool) -> str:
           <button type="submit">{auto_label}</button>
         </form>
         <form method="POST" action="/shutdown" style="display:inline"
-              onsubmit="return confirm('停止后需在 Mac 上重新运行 ./start.sh（或靠登录自启）才能再开。确定停止？')">
+              onsubmit="return confirm('停止后需在{THIS_PC}上重新运行 {RESTART_CMD}（或靠登录自启）才能再开。确定停止？')">
           <button type="submit" class="danger">停止服务器</button>
         </form>
-        <p class="hint">停止后本页会失效——服务器是它自己托管的，只能从 Mac 命令行或登录自启再开。</p>
+        <p class="hint">停止后本页会失效——服务器是它自己托管的，只能从{THIS_PC}命令行（<code>{RESTART_CMD}</code>）或登录自启再开。</p>
         """
     else:
         server_controls = (
-            '<p class="hint">🔒 开关服务器 / 登录自启只能在这台 Mac 上操作。</p>'
+            f'<p class="hint">🔒 开关服务器 / 登录自启只能在{THIS_PC}上操作。</p>'
         )
 
     rows = "".join(
@@ -251,7 +319,7 @@ def render_status_page(is_local: bool) -> str:
   .status-ok {{ color: #1a7f37; font-weight: 600; }}
 </style></head><body>
   <h1>otp-relay <span class="status-ok">● 运行中</span></h1>
-  <p class="hint">页面每 5 秒自动刷新。手机和这台 Mac 需在同一 Wi-Fi，或 Mac 连着手机热点。</p>
+  <p class="hint">页面每 5 秒自动刷新。手机和{THIS_PC}需在同一 Wi-Fi，或电脑连着手机热点。</p>
 
   <h2>📱 手机端把转发地址填成</h2>
   <div class="card">{url_rows}</div>
@@ -329,7 +397,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self._is_local():
             self._send(403, "only allowed from localhost\n")
             return
-        self._send(200, "服务器正在停止……本页已失效。重开请在 Mac 上运行 ./start.sh\n")
+        self._send(200, f"服务器正在停止……本页已失效。重开请在{THIS_PC}上运行 {RESTART_CMD}\n")
         print("[shutdown] 收到本机停止请求，退出。")
         # 另起线程延迟退出，先把响应发完
         threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0)), daemon=True).start()
@@ -369,7 +437,7 @@ class Handler(BaseHTTPRequestHandler):
 
         code = extract_code(text)
         if code:
-            copy_to_clipboard(code)
+            set_clipboard(code)
             notify(code)
             record("hit", f"验证码 {mask(code)} 已复制")
             print(f"[HIT] code={code}  <- {text!r}")

@@ -1,28 +1,41 @@
-# otp-relay — 手机验证码自动到 Mac 剪贴板
+# otp-relay — 手机验证码自动到电脑剪贴板
 
 投简历/登录时不用再"掏手机 → 看短信 → 手抄验证码"。
-手机收到验证码短信后自动转发到本机，抠出验证码、**写入 Mac 剪贴板并弹通知**，你在网页里 `Cmd+V` 即可。
+手机收到验证码短信后自动转发到本机，抠出验证码、**写入电脑剪贴板并弹通知**，你在网页里粘贴（Mac `Cmd+V` / Windows `Ctrl+V`）即可。
+
+**支持 macOS 和 Windows**（同一份代码，按平台自动适配剪贴板/通知/自启）。
 
 ## 它是怎么工作的
 
 ```
 手机（收到含"验证码"的短信）
-   │  POST http://<Mac的IP>:8787/otp   body: 短信原文
+   │  POST http://<电脑的IP>:8787/otp   body: 短信原文
    ▼
 同一个 Wi-Fi / 手机热点（局域网直连，无需公网、无需 VPN）
    ▼
-Mac 上的 otp_server.py（监听 8787，路由 /otp）
+电脑上的 otp_server.py（监听 8787，路由 /otp）
    │  以"验证码/code"为锚抠出 4-8 位数字 → 写剪贴板 + 弹通知
    ▼
-你在网页里 Cmd+V
+你在网页里粘贴（Cmd+V / Ctrl+V）
 ```
 
-- **不改机器人自动投递**，只是半自动：省掉"掏手机看码抄码"，保留你手动 `Cmd+V`。
-- **零依赖**：只用 macOS 自带的 `python3` / `pbcopy` / `osascript`。
+- **不改机器人自动投递**，只是半自动：省掉"掏手机看码抄码"，保留你手动粘贴。
+- **零依赖**：只用系统自带能力——Mac 用 `python3`/`pbcopy`/`osascript`，Windows 用 `python`/`clip`/PowerShell。
 
 ---
 
-## Mac 端：启动服务
+## 启动服务
+
+**macOS**：
+
+```bash
+cd otp-relay
+./start.sh
+```
+
+**Windows**：双击 `start.cmd`，或在 cmd/PowerShell 里运行它（需先装 Python 3 并勾选 "Add to PATH"）。Windows 的手机该填 IP 在状态页 <http://localhost:8787/> 顶部会列出。
+
+以下以 macOS 为例，Windows 除了启动方式和粘贴键（`Ctrl+V`）外完全一致：
 
 ```bash
 cd otp-relay
@@ -146,8 +159,9 @@ MacroDroid 方案：触发器=**收到短信** → 动作=**HTTP Request**（POS
 
 ## 待办（TODO）
 
-- [x] 开机自启（launchd LaunchAgent）—— 已支持，网页一键开关
-- [x] 网页控制服务停止 —— 已支持（单向，重开靠 start.sh/自启）
+- [x] 开机自启 —— 已支持，网页一键开关（Mac: LaunchAgent / Windows: 启动文件夹）
+- [x] 网页控制服务停止 —— 已支持（单向，重开靠 start 脚本/自启）
+- [x] Windows 支持 —— 已支持（剪贴板/通知/本机IP/自启按平台自动适配）
 - [ ] 英文验证码：加一条 `code` 触发的自动化
 - [ ] 地址永不变：iPhone 若能切非中国区 App Store，则上 Tailscale，一个地址通吃所有网络
 - [ ] 真·自动填入（免 Cmd+V）：辅助功能权限 + 模拟键盘，处理分格输入框
