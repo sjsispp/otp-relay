@@ -33,7 +33,8 @@ for ip in $others; do
   [ "$ip" = "$primary" ] && echo "     * $ip   ← 首选" || echo "       $ip"
 done
 echo ""
-echo "   自测：手机 Safari 打开 http://${primary:-<上面某个IP>}:$PORT/  应显示 'otp-relay ok'"
+echo "   本机状态/配置页（含 Token 开关）：http://localhost:$PORT/"
+echo "   手机自测：Safari 打开 http://${primary:-<上面某个IP>}:$PORT/  应看到状态页"
 echo "────────────────────────────────────────────────────"
 echo ""
 
