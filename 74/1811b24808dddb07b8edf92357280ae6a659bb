@@ -1,0 +1,29 @@
+otp_server.py
+  s_04153daf23a3db::t_4549481c50e417 247-249
+  s_04153daf23a3db::t_e9273a3bf70593 196-219
+  s_04153daf23a3db::t_74627f126f1e6c 262-264
+  s_04153daf23a3db::t_08043ca2d36261 20,23-24,37-80
+  s_04153daf23a3db::t_140aa3df1571bf 304-309,313-335
+  s_04153daf23a3db::t_e6dd9874d437f4 336
+README.md
+  s_04153daf23a3db::t_6f452f15402852 51-56
+  s_04153daf23a3db::t_fa1bc88dd564f4 149-150
+.gitignore
+  s_04153daf23a3db::t_46ed3643906db8 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "741811b24808dddb07b8edf92357280ae6a659bb",
+  "prompts": {},
+  "sessions": {
+    "s_04153daf23a3db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c07a1235-2cca-428d-af4b-f158681d9d2b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "wudazhan <wudazhan5@gmail.com>"
+    }
+  }
+}
