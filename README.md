@@ -55,6 +55,12 @@ cd otp-relay
    - 展开"显示更多"：方法 **POST**，请求体 **JSON**，加字段 `text` = 变量「**快捷指令输入**」（即短信正文）
 4. 保存
 
+配置截图示例（左：触发条件；右：POST 动作）：
+
+| 触发条件 | POST 动作 |
+|---|---|
+| ![触发条件](docs/ios-1-trigger.png) | ![POST 动作](docs/ios-2-action.png) |
+
 ### Android（没有快捷指令，用短信转发 App）
 
 安卓没有"快捷指令"，用一个支持 Webhook 的短信转发 App 即可。推荐开源免费的
