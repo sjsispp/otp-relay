@@ -1,0 +1,19 @@
+README.md
+  s_04153daf23a3db::t_db8a63cb2bf32b 58-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "639c5c4d62cd57005a210efc1c582f7a64d1b294",
+  "prompts": {},
+  "sessions": {
+    "s_04153daf23a3db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c07a1235-2cca-428d-af4b-f158681d9d2b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "wudazhan <wudazhan5@gmail.com>"
+    }
+  }
+}
