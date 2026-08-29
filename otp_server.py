@@ -17,8 +17,11 @@ otp_server.py — 本地验证码中继（Mac 侧）
 """
 
 import json
+import os
 import re
 import subprocess
+import sys
+import threading
 import time
 from collections import deque
 from datetime import datetime
@@ -31,6 +34,50 @@ PORT = 8787
 CONFIG_PATH = Path(__file__).with_name("config.json")  # 存 token，已 gitignore
 # 命中这些关键词之一，才当作验证码短信处理（否则忽略，不动剪贴板）
 KEYWORDS = ["验证码", "动态码", "校验码", "code", "verification", "otp", "one-time"]
+
+# 登录自启（LaunchAgent）
+LAUNCH_LABEL = "com.otp-relay.local"
+LAUNCH_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_LABEL}.plist"
+SCRIPT_PATH = Path(__file__).resolve()
+# ─────────────────────────────────────────────────────────
+
+
+def autostart_enabled() -> bool:
+    return LAUNCH_PLIST.exists()
+
+
+def enable_autostart() -> None:
+    """写入并加载 LaunchAgent，登录时自动后台启动本服务。"""
+    log = SCRIPT_PATH.with_name("otp-relay.log")
+    plist = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>{LAUNCH_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array><string>{sys.executable}</string><string>{SCRIPT_PATH}</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+</dict></plist>
+"""
+    LAUNCH_PLIST.parent.mkdir(parents=True, exist_ok=True)
+    LAUNCH_PLIST.write_text(plist)
+    # 尽量加载（已在跑时 bootstrap 可能报"已存在"，忽略即可）
+    subprocess.run(
+        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(LAUNCH_PLIST)],
+        capture_output=True,
+    )
+
+
+def disable_autostart() -> None:
+    """卸载并删除 LaunchAgent。"""
+    subprocess.run(
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{LAUNCH_LABEL}"],
+        capture_output=True,
+    )
+    LAUNCH_PLIST.unlink(missing_ok=True)
 # ─────────────────────────────────────────────────────────
 
 # 4-8 位数字。用"前后都不是数字"断界，而非 \b（中文在 Unicode 下算 \w，\b 会漏）。
@@ -146,6 +193,30 @@ def render_status_page(is_local: bool) -> str:
             '<p class="hint">🔒 修改 token 只能在这台 Mac 上（localhost）操作。</p>'
         )
 
+    auto_on = autostart_enabled()
+    auto_badge = (
+        '<span class="badge on">已开启</span>'
+        if auto_on
+        else '<span class="badge off">未开启</span>'
+    )
+    if is_local:
+        auto_action = "/autostart/off" if auto_on else "/autostart/on"
+        auto_label = "关闭登录自启" if auto_on else "开启登录自启"
+        server_controls = f"""
+        <form method="POST" action="{auto_action}" style="display:inline">
+          <button type="submit">{auto_label}</button>
+        </form>
+        <form method="POST" action="/shutdown" style="display:inline"
+              onsubmit="return confirm('停止后需在 Mac 上重新运行 ./start.sh（或靠登录自启）才能再开。确定停止？')">
+          <button type="submit" class="danger">停止服务器</button>
+        </form>
+        <p class="hint">停止后本页会失效——服务器是它自己托管的，只能从 Mac 命令行或登录自启再开。</p>
+        """
+    else:
+        server_controls = (
+            '<p class="hint">🔒 开关服务器 / 登录自启只能在这台 Mac 上操作。</p>'
+        )
+
     rows = "".join(
         f"<tr><td>{t}</td><td>{'✅ 命中' if k == 'hit' else '➖ 忽略'}</td><td>{d}</td></tr>"
         for t, k, d in RECENT
@@ -173,8 +244,9 @@ def render_status_page(is_local: bool) -> str:
   .tokenform {{ display: flex; gap: 8px; margin-top: 8px; }}
   .tokenform input {{ flex: 1; padding: 8px; border-radius: 8px;
     border: 1px solid rgba(127,127,127,.4); background: transparent; color: inherit; }}
-  .tokenform button {{ padding: 8px 14px; border: 0; border-radius: 8px;
-    background: #0a84ff; color: #fff; font-weight: 600; }}
+  .tokenform button, .card button {{ padding: 8px 14px; border: 0; border-radius: 8px;
+    background: #0a84ff; color: #fff; font-weight: 600; margin-right: 8px; }}
+  .card button.danger {{ background: #d1242f; }}
   .hint {{ color: #888; font-size: 13px; }} code {{ font-family: ui-monospace, monospace; }}
   .status-ok {{ color: #1a7f37; font-weight: 600; }}
 </style></head><body>
@@ -186,6 +258,9 @@ def render_status_page(is_local: bool) -> str:
 
   <h2>🔐 安全（Token）&nbsp;{token_badge}</h2>
   <div class="card">{token_form}</div>
+
+  <h2>⚙️ 服务控制&nbsp;（登录自启 {auto_badge}）</h2>
+  <div class="card">{server_controls}</div>
 
   <h2>🕑 最近活动（验证码已脱敏）</h2>
   <div class="card"><table>
@@ -226,8 +301,38 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_otp()
         elif path == "/config":
             self._handle_config()
+        elif path == "/autostart/on":
+            self._handle_autostart(True)
+        elif path == "/autostart/off":
+            self._handle_autostart(False)
+        elif path == "/shutdown":
+            self._handle_shutdown()
         else:
             self._send(404, "not found\n")
+
+    def _redirect_home(self):
+        self.send_response(303)
+        self.send_header("Location", "/")
+        self.end_headers()
+
+    def _handle_autostart(self, enable: bool):
+        if not self._is_local():
+            self._send(403, "only allowed from localhost\n")
+            return
+        try:
+            enable_autostart() if enable else disable_autostart()
+        except Exception as e:
+            print(f"[autostart] 失败: {e}")
+        self._redirect_home()
+
+    def _handle_shutdown(self):
+        if not self._is_local():
+            self._send(403, "only allowed from localhost\n")
+            return
+        self._send(200, "服务器正在停止……本页已失效。重开请在 Mac 上运行 ./start.sh\n")
+        print("[shutdown] 收到本机停止请求，退出。")
+        # 另起线程延迟退出，先把响应发完
+        threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0)), daemon=True).start()
 
     def _read_body(self) -> str:
         length = int(self.headers.get("Content-Length", 0))
