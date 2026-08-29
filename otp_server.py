@@ -188,6 +188,30 @@ _CODE_RE = re.compile(r"(?<!\d)(\d{4,8})(?!\d)")
 # 最近活动（内存，重启清空）
 RECENT = deque(maxlen=12)
 
+# 最近一次转发来源的手机信息（从 User-Agent 推断），重启清空
+LAST_PHONE: dict[str, str] = {}
+
+
+def guess_phone_os(ua: str) -> str:
+    """从 User-Agent 粗略推断手机系统。"""
+    u = ua.lower()
+    if any(k in u for k in ("iphone", "ios", "shortcuts", "cfnetwork", "darwin")):
+        return "iPhone (iOS)"
+    if any(k in u for k in ("android", "dalvik", "okhttp")):
+        return "Android"
+    return "未知"
+
+
+def host_os() -> str:
+    """本机操作系统，尽量带版本。"""
+    import platform
+    if IS_MAC:
+        ver = platform.mac_ver()[0]
+        return f"macOS {ver}".strip()
+    if IS_WIN:
+        return f"Windows {platform.release()}".strip()
+    return f"{platform.system()} {platform.release()}".strip()
+
 
 def load_token() -> str:
     try:
@@ -285,6 +309,23 @@ def render_status_page(is_local: bool) -> str:
             f'<p class="hint">🔒 开关服务器 / 登录自启只能在{THIS_PC}上操作。</p>'
         )
 
+    # 系统信息：本机（自动）+ 手机（从最近转发的 UA 推断）
+    if LAST_PHONE:
+        phone_line = (
+            f'<div><b>手机系统：</b>{LAST_PHONE["os"]}　'
+            f'<span class="hint">（{LAST_PHONE["ip"]}，最近 {LAST_PHONE["at"]}）</span></div>'
+            f'<div class="hint" style="word-break:break-all">UA: {LAST_PHONE["ua"] or "（空）"}</div>'
+        )
+    else:
+        phone_line = (
+            '<div><b>手机系统：</b>等待第一条转发…</div>'
+            '<div class="hint">手机成功发来一条验证码后，这里会自动显示 iPhone / Android。</div>'
+        )
+    sysinfo = (
+        f'<div><b>本机系统：</b>{host_os()}　'
+        f'<span class="hint">({sys.platform})</span></div>{phone_line}'
+    )
+
     rows = "".join(
         f"<tr><td>{t}</td><td>{'✅ 命中' if k == 'hit' else '➖ 忽略'}</td><td>{d}</td></tr>"
         for t, k, d in RECENT
@@ -324,6 +365,9 @@ def render_status_page(is_local: bool) -> str:
   <h2>📱 手机端把转发地址填成</h2>
   <div class="card">{url_rows}</div>
 
+  <h2>💻 系统信息</h2>
+  <div class="card">{sysinfo}</div>
+
   <h2>🔐 安全（Token）&nbsp;{token_badge}</h2>
   <div class="card">{token_form}</div>
 
@@ -356,7 +400,14 @@ class Handler(BaseHTTPRequestHandler):
             self._send(
                 200,
                 json.dumps(
-                    {"ok": True, "ips": local_ips(), "token_enabled": bool(TOKEN)}
+                    {
+                        "ok": True,
+                        "ips": local_ips(),
+                        "token_enabled": bool(TOKEN),
+                        "host_os": host_os(),
+                        "platform": sys.platform,
+                        "phone": LAST_PHONE or None,
+                    }
                 ),
                 "application/json",
             )
@@ -425,6 +476,15 @@ class Handler(BaseHTTPRequestHandler):
             record("skip", "token 不匹配，已拒绝")
             self._send(401, "bad token\n")
             return
+
+        # 记录转发来源手机（从 UA 推断）
+        ua = self.headers.get("User-Agent", "")
+        LAST_PHONE.update(
+            ua=ua,
+            os=guess_phone_os(ua),
+            ip=self.client_address[0],
+            at=datetime.now().strftime("%H:%M:%S"),
+        )
 
         raw = self._read_body()
         text = raw
