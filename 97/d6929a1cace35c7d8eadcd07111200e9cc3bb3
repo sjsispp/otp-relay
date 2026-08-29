@@ -1,0 +1,25 @@
+start.sh
+  s_04153daf23a3db::t_6d79ee079e3833 1-40
+.gitignore
+  s_04153daf23a3db::t_1e44574a9ef591 1-4
+README.md
+  s_04153daf23a3db::t_a3c63460b79256 1-98
+otp_server.py
+  s_04153daf23a3db::t_4596b2b47a345c 1-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.24",
+  "base_commit_sha": "97d6929a1cace35c7d8eadcd07111200e9cc3bb3",
+  "prompts": {},
+  "sessions": {
+    "s_04153daf23a3db": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c07a1235-2cca-428d-af4b-f158681d9d2b",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "wudazhan <wudazhan5@gmail.com>"
+    }
+  }
+}
