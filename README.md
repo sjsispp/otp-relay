@@ -89,37 +89,130 @@ cd otp-relay
 |---|---|
 | ![触发条件](docs/ios-1-trigger.png) | ![POST 动作](docs/ios-2-action.png) |
 
-### Android（没有快捷指令，用短信转发 App）
+### Android（短信转发 App）
 
-安卓没有"快捷指令"，用一个支持 Webhook 的短信转发 App 即可。推荐开源免费的
-**SmsForwarder（短信转发器）**（GitHub: `pppgao/SmsForwarder`），也可用 **MacroDroid**。
+安卓端需要同时配置**发送通道**和**转发规则**。只安装 App、打开短信监听开关，不会自动把短信发到电脑。
 
-> 服务端容错很强：只要 POST 的 body 里**包含短信正文**（不管纯文本还是 JSON），
-> 就能抠出验证码。所以转发 App 的模板**不用调得很精确**，用它的默认模板通常就行。
+推荐开源免费的 **SmsForwarder（短信转发器）**，也可以使用 **MacroDroid**。
 
-以 **SmsForwarder** 为例：
+- GitHub 项目地址：<https://github.com/pppscn/SmsForwarder>
+- APK 下载：<https://github.com/pppscn/SmsForwarder/releases>
 
-1. 安装后按引导授予**短信读取/接收**权限；并在系统里给它**关闭电池优化 / 允许后台常驻**（否则锁屏后可能收不到、转不出）。
-2. 进 **发送通道（Senders）** → 新增 → 类型选 **Webhook**：
-   - **WebHook 地址**：`http://<Mac的IP>:8787/otp`
-   - **请求方式**：`POST`
-   - **消息模板 / Body**：用它默认的（含短信正文的那个）即可；想更干净可填 `{"text":"[短信正文变量]"}`（变量名以 App 里给的占位符为准，能带出正文即可）
-   - 保存后点**测试**，Mac 终端应打印 `[HIT]`（测试文本里带上"验证码 123456"就能看到）
-3. 进 **转发规则（Rules）** → 新增：
-   - **匹配字段**：短信内容
-   - **匹配方式**：包含 → 关键词 `验证码`（与 iPhone 触发词对等，挡掉私人短信）
-   - **发送通道**：选上一步建的 Webhook
-   - 保存启用
+从 Release 下载 APK 时，近年的 Android 真机通常选择 `arm64-v8a`；不确定架构时选择 `universal`。不要下载 `x86`/`x86_64`（模拟器架构）或 Source code。
 
-MacroDroid 方案：触发器=**收到短信** → 动作=**HTTP Request**（POST，URL 同上，Body 放短信内容变量），可加"内容包含 验证码"的约束。
+#### Android + Windows 实测配置（2026-10-17）
+
+以下组合已完成真实短信全链路测试：
+
+- Windows 11 + Python 3.12.6
+- OPPO Find X7 / ColorOS
+- SmsForwarder 3.5.0（`arm64-v8a`）
+- 拼多多验证码短信 → Webhook → `[HIT]` → Windows 通知 → 剪贴板
+
+1. **启动 Windows 服务**
+
+   在 PowerShell 中运行：
+
+   ```powershell
+   cd D:\GOfiles\Agent\otp-relay
+   .\start.cmd
+   ```
+
+   看到下面三行就代表启动成功，窗口需要保持开启：
+
+   ```text
+   otp-relay 已启动：http://localhost:8787/
+   手机端 POST 目标：http://<本机IP>:8787/otp
+   Token 校验：关闭。按 Ctrl+C 停止。
+   ```
+
+   某些 Windows 终端会把 `start.cmd` 前面的中文提示显示成乱码，甚至出现提示行“不是内部或外部命令”；只要最后出现上面三行，Python 服务就已经正常运行。
+
+2. **确认手机可以连接电脑**
+
+   在 Windows 运行 `ipconfig`，使用 **WLAN** 网卡下的 IPv4 地址。不要误用 VMware、WSL、Hyper-V 等虚拟网卡地址。
+
+   手机与电脑连接同一 Wi-Fi，然后用手机浏览器打开：
+
+   ```text
+   http://<Windows的WLAN-IP>:8787/
+   ```
+
+   能看到 `otp-relay ● 运行中` 才继续。如果打不开，检查 Windows 防火墙是否允许 Python 访问“专用网络”。
+
+3. **安装并授权 SmsForwarder**
+
+   安装后授予短信读取/接收权限。OPPO/ColorOS 可以长按桌面的“短信转发器”图标 → **应用信息**，允许短信权限、后台活动和自启动，并关闭该 App 的电池优化。
+
+   如果普通短信可以转发、验证码短信却完全收不到，检查系统短信 App 的 **设置 → 隐私保护 → 验证码安全保护**。关闭该保护会降低短信隐私安全，只在确认 ColorOS 确实拦截验证码、且设备为本人使用时考虑关闭。
+
+4. **创建发送通道**
+
+   SmsForwarder → **发送通道** → 新增 → 类型选择 **Webhook**（不是 URL Scheme，也不是 Socket）：
+
+   ```text
+   名称：电脑验证码
+   WebHook 地址：http://<Windows的WLAN-IP>:8787/otp
+   请求方式：POST
+   消息模板：{"text":"[msg]"}
+   Header：Token 未开启时留空
+   Secret：留空
+   ```
+
+   SmsForwarder 3.5.0 使用“消息模板”这个名称；旧版本如果显示 `WebParams` 或“请求参数”，就在对应输入框填写同一段 JSON。留空并使用 App 默认的表单请求通常也能工作，因为服务端会从整个请求体中寻找短信正文。
+
+   保存后点击通道的**测试**。默认测试文本没有验证码时，电脑终端显示 `[skip] no code` 也代表 Webhook 已打通。要明确测试剪贴板，可以临时把“消息模板”改成：
+
+   ```json
+   {"text":"验证码 123456"}
+   ```
+
+   此时终端应显示 `[HIT] code=123456`，测试后再恢复为 `{"text":"[msg]"}`。
+
+5. **创建转发规则**
+
+   SmsForwarder → **转发规则** → 新增：
+
+   ```text
+   消息类型：短信
+   匹配字段：短信内容
+   匹配方式：包含
+   匹配值：验证码
+   发送通道：电脑验证码
+   ```
+
+   保存并确认规则已启用。若需要兼容其他短信，可分别增加 `动态码`、`校验码`、`code`、`OTP` 等规则。不建议“转发全部短信”，否则普通私人短信也会被发送到电脑。
+
+6. **验证真实短信**
+
+   收到验证码短信后，Windows 终端应出现：
+
+   ```text
+   [HIT] code=445430  <- '……验证码为445430……'
+   ```
+
+   随后 Windows 弹出通知，验证码进入剪贴板，可直接 `Ctrl+V`。如果为了反馈问题而复制终端日志，会覆盖刚写入的验证码；请先在记事本中粘贴验证，或用 `Get-Clipboard`/`Win+V` 检查。
+
+MacroDroid 方案：触发器=**收到短信** → 动作=**HTTP Request**（POST，URL 同上，Body 放短信内容变量），可加“内容包含 验证码”的约束。
+
+| 通用设置                                 | 发送通道 |
+|--------------------------------------|---|
+| ![SmsForwarder 通用设置](docs/Android-1.jpg) | ![SmsForwarder Webhook 发送通道](docs/Android-2.jpg) |
+
+| 转发规则 | 手机浏览器查看运行状态 |
+|---|---|
+| ![SmsForwarder 转发规则](docs/Android-3.jpg) | ![手机浏览器中的 otp-relay 状态页](docs/Android-4.jpg) |
+
+![接收情况](docs/Android-5.png)
 
 ---
 
 ## 验证是否打通（分层排查）
 
-1. **Mac 自测**：服务启动后，`curl http://127.0.0.1:8787/otp -d '{"text":"验证码 123456"}'`，剪贴板应变成 `123456`。
-2. **网络自测**：手机 Safari 打开 `http://<Mac的IP>:8787/`，看到状态页 = 手机能连到 Mac。
-3. **全链路**：发一条真验证码短信 → Mac 终端打印 `[HIT] code=...` + 弹通知 + 剪贴板就位。
+1. **电脑自测**：服务启动后，`curl http://127.0.0.1:8787/otp -d '{"text":"验证码 123456"}'`，剪贴板应变成 `123456`。
+2. **网络自测**：手机浏览器打开 `http://<电脑的IP>:8787/`，看到状态页 = 手机能连到电脑。
+3. **通道自测**：Android 在 Webhook 通道点“测试”；终端出现 `[skip]` 或 `[HIT]` = 通道能连到电脑。
+4. **全链路**：收到一条真实验证码短信 → 终端打印 `[HIT] code=...` + 弹通知 + 剪贴板就位。
 
 ## 常见问题
 
@@ -132,6 +225,10 @@ MacroDroid 方案：触发器=**收到短信** → 动作=**HTTP Request**（POS
 | 码对了但没弹通知 | 系统设置→通知里放行终端/脚本（不影响剪贴板，Cmd+V 照用） |
 | 英文验证码不触发 | 第一版触发词只配了"验证码"；再建一条触发词 `code` 的自动化 |
 | 安卓锁屏后收不到/不转发 | 转发 App 被系统后台省电杀了 → 系统设置里关掉它的电池优化、允许后台常驻/自启动 |
+| Android 状态页的手机信息一直为空 | 手机从未向服务发出请求；先创建 Webhook 发送通道，再创建并启用转发规则 |
+| Webhook 测试显示 `[skip] no code` | 请求已经成功到达；只是测试文本没有“验证码/code”和 4-8 位数字，不是网络错误 |
+| Windows 状态页列出多个 IP | 用 `ipconfig` 找 **WLAN** 的 IPv4；忽略 VMware、WSL、Hyper-V 等虚拟网卡地址 |
+| Windows 弹通知但粘贴不到验证码 | 不要先复制终端日志，它会覆盖验证码；立即在记事本 `Ctrl+V`，或运行 `Get-Clipboard` 检查 |
 
 ## 安全说明
 
